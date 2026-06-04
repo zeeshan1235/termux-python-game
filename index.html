@@ -35,10 +35,9 @@ function drawBg(ctx, stars) {
   const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
   sky.addColorStop(0, "#030010"); sky.addColorStop(0.55,"#150640"); sky.addColorStop(1, "#4a1020");
   ctx.fillStyle = sky; ctx.fillRect(0, 0, W, GROUND_Y);
-  const t = Date.now() * 0.002;
   ctx.save();
   stars.forEach(s => {
-    ctx.globalAlpha = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t + s.ph));
+    ctx.globalAlpha = 0.5 + 0.5 * Math.sin(Date.now() * 0.002 + s.ph);
     ctx.fillStyle = s.col; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
   });
   ctx.globalAlpha = 1; ctx.restore();
@@ -49,22 +48,18 @@ function drawGround(ctx, off) {
   g.addColorStop(0, "#d4920e"); g.addColorStop(1, "#4a3206");
   ctx.fillStyle = g; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
   ctx.fillStyle = "#c48010";
-  for (let i = 0; i < 40; i++) {
-    ctx.fillRect(((i * 79 + off) % W), GROUND_Y + 10, 3, 2);
-  }
+  for (let i = 0; i < 40; i++) ctx.fillRect(((i * 79 + off) % W), GROUND_Y + 10, 3, 2);
 }
 
 function drawAladdin(ctx, p, fr) {
-  const cx = PLAYER_X + PLAYER_W / 2;
+  const cx = p.x + PLAYER_W / 2;
   const isS = p.sliding;
   const bY = p.y + (isS ? PLAYER_H - SLIDE_H : 0);
   const h = isS ? SLIDE_H : PLAYER_H;
   if (p.invincible > 0 && (fr % 6 < 3)) return;
-  
   ctx.save(); ctx.translate(cx, bY + h);
   if (p.faceLeft) ctx.scale(-1, 1);
   const ls = isS ? 0 : (p.vx !== 0 ? Math.sin(fr * 0.4) * 20 : 0);
-  
   if (!isS) {
     ctx.fillStyle = "#c87820";
     [-7, 7].forEach((ox, i) => {
@@ -76,7 +71,6 @@ function drawAladdin(ctx, p, fr) {
   const by = isS ? -h + 2 : -h + 18, bh = isS ? h - 2 : h - 32;
   ctx.beginPath(); ctx.roundRect(-13, by, 26, bh, 5); ctx.fill();
   ctx.fillStyle = "#e03010"; ctx.fillRect(-14, by + bh * 0.6, 28, 5);
-
   if (!isS) {
     ctx.fillStyle = "#e8a870"; ctx.beginPath(); ctx.arc(0, -h + 13, 12, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#cc1c00"; ctx.beginPath(); ctx.moveTo(-11, -h + 2); ctx.lineTo(11, -h + 2); ctx.lineTo(8, -h - 14); ctx.lineTo(-8, -h - 14); ctx.fill();
@@ -88,12 +82,9 @@ function drawAladdin(ctx, p, fr) {
   ctx.restore();
 }
 
-function drawCoin(ctx, c, fr) {
-  if (c.col) return;
-  const sx = Math.abs(Math.cos(fr * 0.1 + c.off));
-  ctx.save(); ctx.translate(c.x + 10, c.y + 10); ctx.scale(sx, 1);
-  ctx.fillStyle = "#ffd700"; ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI*2); ctx.fill();
-  ctx.restore();
+function drawApple(ctx, p) {
+  ctx.fillStyle = "#ff0000"; ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#00aa00"; ctx.fillRect(p.x-1, p.y-8, 2, 4);
 }
 
 function drawObstacle(ctx, o) {
@@ -101,6 +92,13 @@ function drawObstacle(ctx, o) {
   ctx.fillStyle = o.type === "guard" ? "#8c0000" : "#7a3a08";
   ctx.beginPath(); ctx.roundRect(0, 0, 28, o.h, 5); ctx.fill();
   if(o.type === "barrel") { ctx.fillStyle = "rgba(255,80,20,0.6)"; ctx.fillText("☠", 14, 22); }
+  else { ctx.fillStyle = "#000"; ctx.fillText("⚔️", 4, 20); }
+  ctx.restore();
+}
+
+function drawCoin(ctx, c, fr) {
+  ctx.save(); ctx.translate(c.x + 10, c.y + 10); ctx.scale(Math.abs(Math.cos(fr * 0.1 + c.off)), 1);
+  ctx.fillStyle = "#ffd700"; ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI*2); ctx.fill();
   ctx.restore();
 }
 
@@ -120,27 +118,27 @@ function AladdinGame() {
 
   const initGame = useCallback(() => {
     gRef.current = {
-      fr: 0, score: 0, lives: 3, off: 0, maxOff: 0,
-      keys: { left: false, right: false },
-      player: { y: GROUND_Y - PLAYER_H, vy: 0, vx: 0, jumps: 0, sliding: false, slideT: 0, invincible: 0, faceLeft: false },
-      obstacles: [], coins: [], parts: [],
+      fr: 0, score: 0, lives: 3, off: 0, maxOff: 0, keys: { left: false, right: false },
+      player: { x: PLAYER_X, y: GROUND_Y - PLAYER_H, vy: 0, vx: 0, jumps: 0, sliding: false, slideT: 0, invincible: 0, faceLeft: false },
+      obstacles: [], coins: [], projectiles: [],
       stars: Array.from({ length: 60 }, () => ({ x: rr(0, W), y: rr(0, GROUND_Y), r: rr(0.5, 2), ph: rr(0, 6), col: "#fff" })),
       nObst: 400, nCoin: 250
     };
   }, []);
 
   const doJump = useCallback(() => {
-    const g = gRef.current; if (!g) return;
-    if (g.player.jumps < 2) {
-      g.player.vy = g.player.jumps === 1 ? JUMP_VY * 0.8 : JUMP_VY;
-      g.player.jumps++; g.player.sliding = false;
-      playTone(400, 'square', 0.15);
-    }
+    const p = gRef.current?.player; if (!p) return;
+    if (p.jumps < 2) { p.vy = p.jumps === 1 ? JUMP_VY * 0.8 : JUMP_VY; p.jumps++; p.sliding = false; playTone(400, 'square', 0.15); }
   }, []);
 
   const doSlide = useCallback(() => {
-    const p = gRef.current?.player;
-    if (p && p.jumps === 0 && !p.sliding) { p.sliding = true; p.slideT = 40; }
+    const p = gRef.current?.player; if (p && p.jumps === 0 && !p.sliding) { p.sliding = true; p.slideT = 40; }
+  }, []);
+
+  const doShoot = useCallback(() => {
+    const g = gRef.current; if (!g) return;
+    g.projectiles.push({ x: g.player.x + (g.player.faceLeft ? -10 : 30), y: g.player.y + 20, vx: g.player.faceLeft ? -12 : 12, col: false });
+    playTone(600, 'sine', 0.1);
   }, []);
 
   const startGame = useCallback(() => { initGame(); setScore(0); setLives(3); setScreen("playing"); }, [initGame]);
@@ -149,16 +147,14 @@ function AladdinGame() {
     const kd = e => {
       const k = gRef.current?.keys; if(!k) return;
       if (e.code==="ArrowRight") k.right=true; if (e.code==="ArrowLeft") k.left=true;
-      if (e.code==="Space" || e.code==="ArrowUp") { e.preventDefault(); if(screenRef.current!=="playing") startGame(); else doJump(); }
+      if (e.code==="Space" || e.code==="ArrowUp") { e.preventDefault(); screenRef.current!=="playing" ? startGame() : doJump(); }
       if (e.code==="ArrowDown") doSlide();
+      if (e.code==="KeyF") doShoot();
     };
-    const ku = e => {
-      const k = gRef.current?.keys; if(!k) return;
-      if (e.code==="ArrowRight") k.right=false; if (e.code==="ArrowLeft") k.left=false;
-    };
+    const ku = e => { const k = gRef.current?.keys; if(k) { if(e.code==="ArrowRight") k.right=false; if(e.code==="ArrowLeft") k.left=false; } };
     window.addEventListener("keydown", kd); window.addEventListener("keyup", ku);
     return () => { window.removeEventListener("keydown", kd); window.removeEventListener("keyup", ku); };
-  }, [startGame, doJump, doSlide]);
+  }, [startGame, doJump, doSlide, doShoot]);
 
   useEffect(() => {
     if (screen !== "playing") return;
@@ -166,20 +162,10 @@ function AladdinGame() {
 
     const loop = () => {
       const g = gRef.current; if (!g) return;
-      g.fr++;
-
-      const p = g.player;
-      let moveSpeed = 0;
-      if (g.keys.right) { moveSpeed = 6; p.faceLeft = false; }
-      else if (g.keys.left) { moveSpeed = -6; p.faceLeft = true; }
+      g.fr++; const p = g.player; let moveSpeed = 0;
+      if (g.keys.right) { moveSpeed = 6; p.faceLeft = false; } else if (g.keys.left) { moveSpeed = -6; p.faceLeft = true; }
       p.vx = moveSpeed;
-
-      if (moveSpeed !== 0) {
-        g.off += moveSpeed;
-        g.maxOff = Math.max(g.maxOff, g.off);
-        g.obstacles.forEach(o => o.x -= moveSpeed);
-        g.coins.forEach(c => c.x -= moveSpeed);
-      }
+      if (moveSpeed !== 0) { g.off += moveSpeed; g.maxOff = Math.max(g.maxOff, g.off); g.obstacles.forEach(o => o.x -= moveSpeed); g.coins.forEach(c => c.x -= moveSpeed); g.projectiles.forEach(pr => pr.x -= moveSpeed); }
 
       p.vy += GRAVITY; p.y += p.vy;
       const snap = GROUND_Y - (p.sliding ? SLIDE_H : PLAYER_H);
@@ -187,9 +173,20 @@ function AladdinGame() {
       if (p.invincible > 0) p.invincible--;
       if (p.slideT > 0 && --p.slideT <= 0) p.sliding = false;
 
+      g.projectiles.forEach(pr => pr.x += pr.vx);
+      g.projectiles.forEach(pr => {
+        if(pr.col) return;
+        g.obstacles.forEach(o => {
+          if(o.type==="guard" && !o.dead && pr.x > o.x && pr.x < o.x + 28 && pr.y > o.y && pr.y < o.y + o.h) {
+            pr.col = true; o.dead = true; g.score += 20; setScore(g.score); playTone(200, 'square', 0.1);
+          }
+        });
+      });
+      g.projectiles = g.projectiles.filter(pr => pr.x > -100 && pr.x < W + 100 && !pr.col);
+
       if (g.maxOff >= g.nObst) {
         const oh = Math.random() < 0.5 ? 54 : 36;
-        g.obstacles.push({ x: W + 50, y: GROUND_Y - oh, type: oh===54?"guard":"barrel", h: oh });
+        g.obstacles.push({ x: W + 50, y: GROUND_Y - oh, type: oh===54?"guard":"barrel", h: oh, dead: false });
         g.nObst = g.maxOff + rr(300, 500);
       }
       if (g.maxOff >= g.nCoin) {
@@ -197,10 +194,10 @@ function AladdinGame() {
         g.nCoin = g.maxOff + rr(200, 400);
       }
 
-      g.obstacles = g.obstacles.filter(o => o.x > -100 && o.x < W + 800);
+      g.obstacles = g.obstacles.filter(o => !o.dead && o.x > -100 && o.x < W + 800);
       g.coins = g.coins.filter(c => c.x > -50 && !c.col && c.x < W + 800);
 
-      const pL = PLAYER_X + 6, pR = PLAYER_X + PLAYER_W - 6, pT = p.y + 5, pB = p.y + (p.sliding ? SLIDE_H : PLAYER_H) - 5;
+      const pL = p.x + 6, pR = p.x + PLAYER_W - 6, pT = p.y + 5, pB = p.y + (p.sliding ? SLIDE_H : PLAYER_H) - 5;
       if (p.invincible <= 0) {
         for (const o of g.obstacles) {
           if (pR > o.x + 5 && pL < o.x + 28 && pB > o.y + 6 && pT < o.y + o.h - 6) {
@@ -210,16 +207,15 @@ function AladdinGame() {
         }
       }
       g.coins.forEach(c => {
-        if (!c.col && pR > c.x && pL < c.x + 20 && pB > c.y && pT < c.y + 20) {
-          c.col = true; g.score += 10; setScore(g.score); playTone(800, 'sine', 0.1);
-        }
+        if (!c.col && pR > c.x && pL < c.x + 20 && pB > c.y && pT < c.y + 20) { c.col = true; g.score += 10; setScore(g.score); playTone(800, 'sine', 0.1); }
       });
 
       ctx.clearRect(0, 0, W, H);
       drawBg(ctx, g.stars);
-      g.coins.forEach(c => drawCoin(ctx, c, g.fr));
+      g.coins.forEach(c => { if(!c.col) drawCoin(ctx, c, g.fr); });
       drawGround(ctx, g.off);
       g.obstacles.forEach(o => drawObstacle(ctx, o));
+      g.projectiles.forEach(pr => drawApple(ctx, pr));
       drawAladdin(ctx, p, g.fr);
       drawHUD(ctx, g);
       rafRef.current = requestAnimationFrame(loop);
@@ -228,29 +224,28 @@ function AladdinGame() {
     return () => cancelAnimationFrame(rafRef.current);
   }, [screen]);
 
-  const btnStyle = { padding:"15px 25px", fontSize:26, borderRadius:"15px", background:"rgba(255,255,255,0.2)", border:"2px solid #fff", color:"#fff", userSelect:"none" };
+  const btnStyle = { padding:"12px 18px", fontSize:24, borderRadius:"15px", background:"rgba(255,255,255,0.2)", border:"2px solid #fff", color:"#fff", userSelect:"none" };
 
   return (
     <div style={{ width:"100vw", height:"100svh", display:"flex", alignItems:"center", justifyContent:"center", background:"#111" }}>
       <div style={{ position:"relative", width:W, height:H, maxWidth:"100vw", maxHeight:"100svh", overflow:"hidden" }}>
         <canvas ref={cvRef} width={W} height={H} style={{ display:"block", background:"#000", width:"100%", height:"100%", objectFit:"contain" }} />
-        
         {screen === "playing" && (
           <React.Fragment>
-            <div style={{position:"absolute", bottom:20, left:20, display:"flex", gap:15, zIndex:10}}>
+            <div style={{position:"absolute", bottom:10, left:10, display:"flex", gap:10, zIndex:10}}>
               <button style={btnStyle} onTouchStart={()=>gRef.current.keys.left=true} onTouchEnd={()=>gRef.current.keys.left=false} onMouseDown={()=>gRef.current.keys.left=true} onMouseUp={()=>gRef.current.keys.left=false} onMouseLeave={()=>gRef.current.keys.left=false}>⬅️</button>
               <button style={btnStyle} onTouchStart={()=>gRef.current.keys.right=true} onTouchEnd={()=>gRef.current.keys.right=false} onMouseDown={()=>gRef.current.keys.right=true} onMouseUp={()=>gRef.current.keys.right=false} onMouseLeave={()=>gRef.current.keys.right=false}>➡️</button>
             </div>
-            <div style={{position:"absolute", bottom:20, right:20, display:"flex", gap:15, zIndex:10}}>
+            <div style={{position:"absolute", bottom:10, right:10, display:"flex", gap:10, zIndex:10}}>
+              <button style={btnStyle} onTouchStart={(e)=>{e.preventDefault(); doShoot();}} onMouseDown={(e)=>{e.preventDefault(); doShoot();}}>🍎 فائر</button>
               <button style={btnStyle} onTouchStart={(e)=>{e.preventDefault(); doJump();}} onMouseDown={(e)=>{e.preventDefault(); doJump();}}>⬆️</button>
               <button style={btnStyle} onTouchStart={(e)=>{e.preventDefault(); doSlide();}} onMouseDown={(e)=>{e.preventDefault(); doSlide();}}>⬇️</button>
             </div>
           </React.Fragment>
         )}
-
         {screen !== "playing" && (
           <div style={{position:"absolute", inset:0, background:"rgba(0,0,0,0.8)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#fff"}}>
-            <h1 style={{color:"#ffd700", fontSize:48, margin:0}}>{screen === "gameover" ? "گیم اوور" : "Aladdin Pro"}</h1>
+            <h1 style={{color:"#ffd700", fontSize:48, margin:0}}>{screen === "gameover" ? "گیم اوور" : "Aladdin Combat"}</h1>
             {screen === "gameover" && <p style={{fontSize:24}}>آخری اسکور: {score}</p>}
             <button onClick={startGame} style={{marginTop:20, padding:"15px 40px", fontSize:24, background:"#dc2626", color:"#fff", border:"none", borderRadius:30}}>{screen === "gameover" ? "دوبارہ کھیلیں" : "کھیلنا شروع کریں"}</button>
           </div>
