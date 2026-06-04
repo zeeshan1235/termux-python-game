@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Aladdin Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, orientation=landscape">
+  <title>Aladdin Game Pro</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -13,810 +13,253 @@
   <div id="root"></div>
   <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
-
-// ── Constants ──────────────────────────────────────────────────────────────
-const W = 390, H = 650;
-const GROUND_Y   = 540;
-const GRAVITY    = 0.58;
-const JUMP_VY    = -13.5;
-const PLAYER_X   = 85;
-const PLAYER_W   = 32;
-const PLAYER_H   = 54;
-const SLIDE_H    = 28;
-
-// ── Helpers ────────────────────────────────────────────────────────────────
+const W = 800, H = 390;
+const GROUND_Y = 320;
+const GRAVITY = 0.58, JUMP_VY = -12.5;
+const PLAYER_X = 120, PLAYER_W = 32, PLAYER_H = 54, SLIDE_H = 28;
 const rr = (a, b) => a + Math.random() * (b - a);
 
-// ── Draw: Background sky + stars + moon ───────────────────────────────────
+const playTone = (freq, type, dur) => {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = type; osc.frequency.value = freq;
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.start(); gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    osc.stop(ac.currentTime + dur);
+  } catch(e){}
+};
+
 function drawBg(ctx, stars) {
   const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-  sky.addColorStop(0,   "#030010");
-  sky.addColorStop(0.55,"#150640");
-  sky.addColorStop(1,   "#4a1020");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, GROUND_Y);
-
+  sky.addColorStop(0, "#030010"); sky.addColorStop(0.55,"#150640"); sky.addColorStop(1, "#4a1020");
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, GROUND_Y);
   const t = Date.now() * 0.002;
   ctx.save();
   stars.forEach(s => {
-    const a = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t + s.ph));
-    ctx.globalAlpha = a;
-    ctx.fillStyle = s.col;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.globalAlpha = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t + s.ph));
+    ctx.fillStyle = s.col; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
   });
-  ctx.globalAlpha = 1;
-  ctx.restore();
-
-  // Crescent moon
-  ctx.save();
-  ctx.shadowColor = "#ffe566"; ctx.shadowBlur = 28;
-  ctx.fillStyle = "#ffe566";
-  ctx.beginPath(); ctx.arc(316, 68, 30, 0, Math.PI * 2); ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#030010";
-  ctx.beginPath(); ctx.arc(332, 59, 23, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
+  ctx.globalAlpha = 1; ctx.restore();
 }
 
-// ── Draw: Distant palace silhouettes (parallax layer 1) ───────────────────
-const BLDGS = [
-  { bx:0,   h:200, w:75  }, { bx:140, h:145, w:58  },
-  { bx:250, h:215, w:95  }, { bx:390, h:170, w:68  },
-  { bx:520, h:135, w:52  }, { bx:620, h:200, w:85  },
-  { bx:760, h:160, w:62  },
-];
-function drawPalace(ctx, off) {
-  BLDGS.forEach(b => {
-    const x = ((b.bx - off * 0.1) % (W + 300) + W + 300) % (W + 300) - 150;
-    ctx.fillStyle = "#0e0430";
-    ctx.fillRect(x, GROUND_Y - b.h, b.w, b.h);
-    // Dome
-    ctx.beginPath();
-    ctx.ellipse(x + b.w / 2, GROUND_Y - b.h, b.w * 0.4, b.w * 0.28, 0, Math.PI, 0);
-    ctx.fill();
-    // Minaret left
-    ctx.fillRect(x + 4, GROUND_Y - b.h - 45, 9, 45);
-    ctx.beginPath(); ctx.arc(x + 8, GROUND_Y - b.h - 45, 5, Math.PI, 0); ctx.fill();
-    // Minaret right
-    ctx.fillRect(x + b.w - 13, GROUND_Y - b.h - 35, 9, 35);
-    ctx.beginPath(); ctx.arc(x + b.w - 9, GROUND_Y - b.h - 35, 5, Math.PI, 0); ctx.fill();
-    // Window glow
-    ctx.fillStyle = "rgba(255,220,90,0.12)";
-    for (let r = 0; r < 3; r++)
-      for (let c = 0; c < Math.floor(b.w / 22); c++)
-        ctx.fillRect(x + 10 + c * 20, GROUND_Y - b.h + 22 + r * 32, 8, 14);
-    ctx.fillStyle = "#0e0430";
-  });
-}
-
-// ── Draw: Ground ──────────────────────────────────────────────────────────
 function drawGround(ctx, off) {
   const g = ctx.createLinearGradient(0, GROUND_Y, 0, H);
-  g.addColorStop(0, "#d4920e"); g.addColorStop(0.18, "#9c6808"); g.addColorStop(1, "#4a3206");
+  g.addColorStop(0, "#d4920e"); g.addColorStop(1, "#4a3206");
   ctx.fillStyle = g; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-
-  // Top edge glint
-  const e = ctx.createLinearGradient(0, GROUND_Y, W, GROUND_Y);
-  e.addColorStop(0, "#f0b824"); e.addColorStop(0.5, "#ffd040"); e.addColorStop(1, "#f0b824");
-  ctx.fillStyle = e; ctx.fillRect(0, GROUND_Y, W, 4);
-
-  // Pebble texture
   ctx.fillStyle = "#c48010";
-  for (let i = 0; i < 20; i++) {
-    const px = ((i * 79 + off) % W);
-    const px2 = ((i * 61 + 40 + off * 0.8) % W);
-    ctx.fillRect(px, GROUND_Y + 10, 3, 2);
-    ctx.fillRect(px2, GROUND_Y + 20, 2, 2);
+  for (let i = 0; i < 40; i++) {
+    ctx.fillRect(((i * 79 + off) % W), GROUND_Y + 10, 3, 2);
   }
 }
 
-// ── Draw: Aladdin ─────────────────────────────────────────────────────────
 function drawAladdin(ctx, p, fr) {
-  const cx   = PLAYER_X + PLAYER_W / 2;
-  const isS  = p.sliding;
-  const bY   = p.y + (isS ? PLAYER_H - SLIDE_H : 0);
-  const h    = isS ? SLIDE_H : PLAYER_H;
-
+  const cx = PLAYER_X + PLAYER_W / 2;
+  const isS = p.sliding;
+  const bY = p.y + (isS ? PLAYER_H - SLIDE_H : 0);
+  const h = isS ? SLIDE_H : PLAYER_H;
   if (p.invincible > 0 && (fr % 6 < 3)) return;
-
-  ctx.save();
-  ctx.translate(cx, bY + h);
-
-  const ls = isS ? 0 : Math.sin(fr * 0.27) * 15;
-  const gnd = p.jumps === 0;
-
+  
+  ctx.save(); ctx.translate(cx, bY + h);
+  if (p.faceLeft) ctx.scale(-1, 1);
+  const ls = isS ? 0 : (p.vx !== 0 ? Math.sin(fr * 0.4) * 20 : 0);
+  
   if (!isS) {
-    // ── Legs ──
     ctx.fillStyle = "#c87820";
     [-7, 7].forEach((ox, i) => {
-      ctx.save();
-      ctx.translate(ox, -18);
-      ctx.rotate((i === 0 ? ls : -ls) * Math.PI / 180);
-      ctx.beginPath(); ctx.roundRect(-5, 0, 10, 20, 3); ctx.fill();
-      ctx.restore();
-    });
-    // ── Shoes (curled toe Arabian style) ──
-    ctx.fillStyle = "#200c04";
-    const lsx = -7 + Math.sin(ls * Math.PI / 180) * 12;
-    const rsx =  7 - Math.sin(ls * Math.PI / 180) * 12;
-    [lsx, rsx].forEach(sx => {
-      ctx.beginPath();
-      ctx.ellipse(sx, 3, 9, 5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // Curled toe
-      ctx.beginPath();
-      ctx.moveTo(sx + 6, 2);
-      ctx.quadraticCurveTo(sx + 14, -4, sx + 10, -8);
-      ctx.quadraticCurveTo(sx + 7, -5, sx + 6, 2);
-      ctx.fill();
+      ctx.save(); ctx.translate(ox, -18); ctx.rotate((i === 0 ? ls : -ls) * Math.PI / 180);
+      ctx.beginPath(); ctx.roundRect(-5, 0, 10, 20, 3); ctx.fill(); ctx.restore();
     });
   }
-
-  // ── Body / vest ──
   ctx.fillStyle = "#4a28a0";
-  const by = isS ? -h + 2 : -h + 18;
-  const bh = isS ? h - 2  : h - 32;
+  const by = isS ? -h + 2 : -h + 18, bh = isS ? h - 2 : h - 32;
   ctx.beginPath(); ctx.roundRect(-13, by, 26, bh, 5); ctx.fill();
-  // Vest detail
-  ctx.fillStyle = "#6040c0";
-  ctx.beginPath(); ctx.roundRect(-10, by + 4, 8, bh - 8, 3); ctx.fill();
-  // Sash
-  ctx.fillStyle = "#e03010";
-  ctx.fillRect(-14, by + bh * 0.6, 28, 5);
+  ctx.fillStyle = "#e03010"; ctx.fillRect(-14, by + bh * 0.6, 28, 5);
 
   if (!isS) {
-    // ── Head ──
+    ctx.fillStyle = "#e8a870"; ctx.beginPath(); ctx.arc(0, -h + 13, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#cc1c00"; ctx.beginPath(); ctx.moveTo(-11, -h + 2); ctx.lineTo(11, -h + 2); ctx.lineTo(8, -h - 14); ctx.lineTo(-8, -h - 14); ctx.fill();
     ctx.fillStyle = "#e8a870";
-    ctx.beginPath(); ctx.arc(0, -h + 13, 12, 0, Math.PI * 2); ctx.fill();
-    // Hair
-    ctx.fillStyle = "#1c0c04";
-    ctx.beginPath(); ctx.arc(0, -h + 7, 12, Math.PI, 0); ctx.fill();
-    // Eye
-    ctx.fillStyle = "#1c0c04";
-    ctx.beginPath(); ctx.arc(4, -h + 12, 2.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(-4, -h + 12, 2.2, 0, Math.PI * 2); ctx.fill();
-    // White of eye
-    ctx.fillStyle = "#fff";
-    ctx.beginPath(); ctx.arc(4.6, -h + 11.5, 0.8, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(-3.4, -h + 11.5, 0.8, 0, Math.PI * 2); ctx.fill();
-    // Smile
-    ctx.strokeStyle = "#b06030"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(0, -h + 15, 5, 0.1, Math.PI - 0.1); ctx.stroke();
-    // Eyebrows
-    ctx.strokeStyle = "#5a3010"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(2, -h + 8); ctx.lineTo(6, -h + 9); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-2, -h + 8); ctx.lineTo(-6, -h + 9); ctx.stroke();
-
-    // ── Fez hat ──
-    ctx.fillStyle = "#cc1c00";
-    ctx.beginPath();
-    ctx.moveTo(-11, -h + 2);
-    ctx.lineTo(11, -h + 2);
-    ctx.lineTo(8, -h - 14);
-    ctx.lineTo(-8, -h - 14);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = "#aa1400"; ctx.fillRect(-12, -h + 2, 24, 3);
-    // Tassel
-    ctx.fillStyle = "#ffd700";
-    ctx.fillRect(-1, -h - 14, 2, 6);
-    ctx.beginPath(); ctx.arc(0, -h - 8, 3, 0, Math.PI * 2); ctx.fill();
-
-    // ── Arm + sword ──
-    ctx.fillStyle = "#e8a870";
-    const aa = p.jumps > 0 ? -50 : (gnd ? Math.sin(fr * 0.27 + Math.PI) * 18 - 28 : -28);
-    ctx.save(); ctx.translate(14, by + 8); ctx.rotate(aa * Math.PI / 180);
+    ctx.save(); ctx.translate(14, by + 8); ctx.rotate((p.jumps > 0 ? -50 : -28) * Math.PI / 180);
     ctx.beginPath(); ctx.roundRect(0, 0, 7, 15, 3); ctx.fill();
-    // Sword
-    ctx.fillStyle = "#b0b8c0"; ctx.fillRect(2, 13, 3, 24);
-    ctx.fillStyle = "#ffd700"; ctx.fillRect(-1, 10, 9, 5);
-    ctx.fillStyle = "#c0a000"; ctx.fillRect(3, 10, 3, 3);
-    ctx.restore();
+    ctx.fillStyle = "#b0b8c0"; ctx.fillRect(2, 13, 3, 24); ctx.restore();
   }
-
-  // ── Invincible aura ──
-  if (p.invincible > 0) {
-    const pulse = 0.4 + 0.3 * Math.sin(fr * 0.25);
-    ctx.save();
-    ctx.globalAlpha = pulse;
-    ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 3;
-    ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 20;
-    ctx.beginPath(); ctx.arc(0, -h / 2, 34, 0, Math.PI * 2); ctx.stroke();
-    ctx.globalAlpha = pulse * 0.3;
-    ctx.fillStyle = "#ffd700";
-    ctx.beginPath(); ctx.arc(0, -h / 2, 34, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-
   ctx.restore();
 }
 
-// ── Draw: Guard enemy ─────────────────────────────────────────────────────
-function drawGuard(ctx, o, fr) {
-  ctx.save(); ctx.translate(o.x + 18, o.y + o.h);
-  const ls = Math.sin(fr * 0.3) * 14;
-
-  // Legs
-  ctx.fillStyle = "#383870";
-  [-7, 7].forEach((ox, i) => {
-    ctx.save(); ctx.translate(ox, -16); ctx.rotate((i===0?ls:-ls)*Math.PI/180);
-    ctx.beginPath(); ctx.roundRect(-5, 0, 10, 20, 3); ctx.fill(); ctx.restore();
-  });
-  // Body / armour
-  ctx.fillStyle = "#8c0000";
-  ctx.beginPath(); ctx.roundRect(-14, -o.h+16, 28, o.h-30, 4); ctx.fill();
-  ctx.fillStyle = "#aa1800"; ctx.fillRect(-11, -o.h+18, 22, 7);
-  ctx.fillStyle = "#cc2000"; ctx.fillRect(-8, -o.h+26, 16, 4);
-  // Head
-  ctx.fillStyle = "#d09060";
-  ctx.beginPath(); ctx.arc(0, -o.h+11, 10, 0, Math.PI*2); ctx.fill();
-  // Helmet / turban
-  ctx.fillStyle = "#c0940a";
-  ctx.beginPath(); ctx.arc(0, -o.h+9, 12, Math.PI, 0); ctx.fill();
-  ctx.fillRect(-12, -o.h+9, 24, 4);
-  ctx.fillStyle = "#e0a80c";
-  ctx.beginPath(); ctx.arc(0, -o.h+9, 4, 0, Math.PI*2); ctx.fill();
-  // Eyes (menacing)
-  ctx.fillStyle = "#000";
-  ctx.beginPath(); ctx.arc(-3, -o.h+10, 1.8, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(3, -o.h+10, 1.8, 0, Math.PI*2); ctx.fill();
-  // Spear
-  ctx.fillStyle = "#8b6010";
-  ctx.fillRect(16, -o.h - 20, 3, o.h + 4);
-  ctx.fillStyle = "#d0d8e0";
-  ctx.beginPath(); ctx.moveTo(15,-o.h-20); ctx.lineTo(19,-o.h-20); ctx.lineTo(17,-o.h-38); ctx.closePath(); ctx.fill();
-
-  ctx.restore();
-}
-
-// ── Draw: Barrel obstacle ─────────────────────────────────────────────────
-function drawBarrel(ctx, o) {
-  ctx.save(); ctx.translate(o.x, o.y);
-  ctx.fillStyle = "#7a3a08";
-  ctx.beginPath(); ctx.roundRect(0, 0, 28, 36, 5); ctx.fill();
-  ctx.fillStyle = "#9a5010";
-  [0, 16, 32].forEach(y => ctx.fillRect(0, y, 28, 4));
-  ctx.strokeStyle = "#c07830"; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.roundRect(0, 0, 28, 36, 5); ctx.stroke();
-  // Skull label for danger
-  ctx.fillStyle = "rgba(255,80,20,0.6)";
-  ctx.font = "14px serif"; ctx.textAlign = "center";
-  ctx.fillText("☠", 14, 22);
-  ctx.textAlign = "left";
-  ctx.restore();
-}
-
-// ── Draw: Coin ────────────────────────────────────────────────────────────
 function drawCoin(ctx, c, fr) {
+  if (c.col) return;
   const sx = Math.abs(Math.cos(fr * 0.1 + c.off));
   ctx.save(); ctx.translate(c.x + 10, c.y + 10); ctx.scale(sx, 1);
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 12;
-  ctx.fillStyle = "#ffd700";
-  ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = "#ffe966";
-  ctx.beginPath(); ctx.arc(-2, -2, 5, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = "#c8a000";
-  ctx.font = "bold 9px serif"; ctx.textAlign = "center";
-  ctx.fillText("$", 1, 4);
+  ctx.fillStyle = "#ffd700"; ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI*2); ctx.fill();
   ctx.restore();
 }
 
-// ── Draw: Gem ─────────────────────────────────────────────────────────────
-function drawGem(ctx, g, fr) {
-  ctx.save();
-  ctx.translate(g.x + 10, g.y + Math.sin(fr * 0.07 + g.off) * 4);
-  ctx.shadowColor = "#00ddff"; ctx.shadowBlur = 18;
-  ctx.fillStyle = "#00ddff";
-  ctx.beginPath();
-  ctx.moveTo(0,-14); ctx.lineTo(12,0); ctx.lineTo(0,14); ctx.lineTo(-12,0); ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = "rgba(255,255,255,0.5)";
-  ctx.beginPath();
-  ctx.moveTo(0,-14); ctx.lineTo(5,-2); ctx.lineTo(0,2); ctx.lineTo(-5,-2); ctx.closePath();
-  ctx.fill();
-  // Sparkle
-  ctx.fillStyle = "#fff";
-  [[0,-16],[14,0],[0,16],[-14,0]].forEach(([sx,sy]) => {
-    ctx.globalAlpha = 0.5 + 0.5*Math.sin(fr*0.1+g.off+sx);
-    ctx.beginPath(); ctx.arc(sx,sy,1.5,0,Math.PI*2); ctx.fill();
-  });
-  ctx.globalAlpha = 1;
+function drawObstacle(ctx, o) {
+  ctx.save(); ctx.translate(o.x, o.y);
+  ctx.fillStyle = o.type === "guard" ? "#8c0000" : "#7a3a08";
+  ctx.beginPath(); ctx.roundRect(0, 0, 28, o.h, 5); ctx.fill();
+  if(o.type === "barrel") { ctx.fillStyle = "rgba(255,80,20,0.6)"; ctx.fillText("☠", 14, 22); }
   ctx.restore();
 }
 
-// ── Draw: Magic Lamp ─────────────────────────────────────────────────────
-function drawLamp(ctx, l, fr) {
-  ctx.save();
-  ctx.translate(l.x + 17, l.y + Math.sin(fr * 0.05 + l.off) * 5);
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 28;
-  // Body
-  ctx.fillStyle = "#c89010";
-  ctx.beginPath(); ctx.ellipse(0, 5, 17, 11, 0, 0, Math.PI*2); ctx.fill();
-  // Spout
-  ctx.fillStyle = "#b07808";
-  ctx.beginPath(); ctx.moveTo(11,4); ctx.quadraticCurveTo(26,0,22,-9); ctx.quadraticCurveTo(17,-5,11,1); ctx.fill();
-  // Handle
-  ctx.strokeStyle = "#b07808"; ctx.lineWidth = 3.5;
-  ctx.beginPath(); ctx.arc(-15, 2, 9, -0.4, 1.6); ctx.stroke();
-  // Lid
-  ctx.fillStyle = "#d4a018";
-  ctx.beginPath(); ctx.ellipse(0,-5,12,4,0,0,Math.PI*2); ctx.fill();
-  // Flame
-  ctx.fillStyle = "#ff6600"; ctx.shadowColor = "#ff6600"; ctx.shadowBlur = 20;
-  ctx.beginPath(); ctx.ellipse(0,-12,5,9,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = "#ffdd00"; ctx.shadowBlur = 0;
-  ctx.beginPath(); ctx.ellipse(0,-15,3,6,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = "#fff8";
-  ctx.beginPath(); ctx.ellipse(0,-17,1.5,3,0,0,Math.PI*2); ctx.fill();
-  ctx.restore();
-}
-
-// ── Draw: Particles ───────────────────────────────────────────────────────
-function drawParticles(ctx, parts) {
-  parts.forEach(p => {
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, p.life / p.maxL);
-    ctx.fillStyle = p.col;
-    ctx.shadowColor = p.col; ctx.shadowBlur = 8;
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
-  });
-}
-
-// ── Draw: HUD ─────────────────────────────────────────────────────────────
 function drawHUD(ctx, g) {
   ctx.save();
-
-  // Score pill
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.beginPath(); ctx.roundRect(10, 10, 150, 44, 10); ctx.fill();
-  ctx.fillStyle = "#ffd700";
-  ctx.font = "bold 20px serif";
-  ctx.fillText("🪙 " + g.score, 20, 38);
-
-  // Lives
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.beginPath(); ctx.roundRect(W - 125, 10, 115, 44, 10); ctx.fill();
-  ctx.font = "22px serif";
-  for (let i = 0; i < g.lives; i++) ctx.fillText("❤️", W - 118 + i * 34, 40);
-
-  // Level badge
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.beginPath(); ctx.roundRect(W/2 - 55, 10, 110, 36, 10); ctx.fill();
-  ctx.fillStyle = "#c090ff";
-  ctx.font = "bold 14px serif"; ctx.textAlign = "center";
-  ctx.fillText("🌙 مرحلہ " + g.level, W/2, 32);
-  ctx.textAlign = "left";
-
-  // Invincible bar
-  if (g.player.invincible > 0) {
-    const pct = g.player.invincible / 280;
-    ctx.fillStyle = "rgba(0,0,0,0.4)";
-    ctx.beginPath(); ctx.roundRect(10, 60, 150, 10, 5); ctx.fill();
-    const barGrad = ctx.createLinearGradient(10, 0, 160, 0);
-    barGrad.addColorStop(0, "#ffd700"); barGrad.addColorStop(1, "#ff8800");
-    ctx.fillStyle = barGrad;
-    ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 10;
-    ctx.beginPath(); ctx.roundRect(10, 60, 150 * pct, 10, 5); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "#ffd700";
-    ctx.font = "9px serif"; ctx.fillText("🪔 جادو فعال", 12, 84);
-  }
-
+  ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.beginPath(); ctx.roundRect(10, 10, 150, 44, 10); ctx.fill();
+  ctx.fillStyle = "#ffd700"; ctx.font = "bold 20px serif"; ctx.fillText("🪙 " + g.score, 20, 38);
+  ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.beginPath(); ctx.roundRect(W - 140, 10, 130, 44, 10); ctx.fill();
+  ctx.font = "22px serif"; for (let i = 0; i < g.lives; i++) ctx.fillText("❤️", W - 130 + i * 34, 40);
   ctx.restore();
 }
 
 function AladdinGame() {
-  const cvRef      = useRef(null);
-  const gRef       = useRef(null);
-  const rafRef     = useRef(null);
-  const screenRef  = useRef("start");
-  const touchY0    = useRef(0);
-
-  const [screen,   _setScreen] = useState("start");
-  const [score,    setScore]   = useState(0);
-  const [lives,    setLives]   = useState(3);
-  const [level,    setLevel]   = useState(1);
-  const [hiscore,  setHiScore] = useState(() => +(localStorage.getItem("al_hs") || 0));
-
+  const cvRef = useRef(null), gRef = useRef(null), rafRef = useRef(null), screenRef = useRef("start");
+  const [screen, _setScreen] = useState("start"), [score, setScore] = useState(0), [lives, setLives] = useState(3);
   const setScreen = s => { screenRef.current = s; _setScreen(s); };
 
-  // ── Init game state ──────────────────────────────────────────────────────
   const initGame = useCallback(() => {
     gRef.current = {
-      fr: 0, score: 0, scoreTick: 0,
-      lives: 3, level: 1,
-      speed: 4.6, off: 0,
-      lvlThresh: 450,
-      player: {
-        y: GROUND_Y - PLAYER_H,
-        vy: 0, jumps: 0,
-        sliding: false, slideT: 0,
-        invincible: 0,
-      },
-      obstacles: [], coins: [], gems: [], lamps: [], parts: [],
-      stars: Array.from({ length: 80 }, () => ({
-        x: rr(0, W), y: rr(0, GROUND_Y * 0.9),
-        r: rr(0.3, 2), ph: rr(0, Math.PI * 2),
-        col: Math.random() > 0.85 ? "#ffd8a0" : "#ffffff",
-      })),
-      nObst: 520, nCoin: 200, nGem: 370, nLamp: 950,
+      fr: 0, score: 0, lives: 3, off: 0, maxOff: 0,
+      keys: { left: false, right: false },
+      player: { y: GROUND_Y - PLAYER_H, vy: 0, vx: 0, jumps: 0, sliding: false, slideT: 0, invincible: 0, faceLeft: false },
+      obstacles: [], coins: [], parts: [],
+      stars: Array.from({ length: 60 }, () => ({ x: rr(0, W), y: rr(0, GROUND_Y), r: rr(0.5, 2), ph: rr(0, 6), col: "#fff" })),
+      nObst: 400, nCoin: 250
     };
   }, []);
 
-  // ── Actions ──────────────────────────────────────────────────────────────
   const doJump = useCallback(() => {
     const g = gRef.current; if (!g) return;
-    const p = g.player;
-    if (p.jumps < 2) {
-      p.vy = p.jumps === 1 ? JUMP_VY * 0.82 : JUMP_VY;
-      p.jumps++; p.sliding = false; p.slideT = 0;
+    if (g.player.jumps < 2) {
+      g.player.vy = g.player.jumps === 1 ? JUMP_VY * 0.8 : JUMP_VY;
+      g.player.jumps++; g.player.sliding = false;
+      playTone(400, 'square', 0.15);
     }
   }, []);
 
   const doSlide = useCallback(() => {
-    const g = gRef.current; if (!g) return;
-    const p = g.player;
-    if (p.jumps === 0 && !p.sliding) { p.sliding = true; p.slideT = 38; }
+    const p = gRef.current?.player;
+    if (p && p.jumps === 0 && !p.sliding) { p.sliding = true; p.slideT = 40; }
   }, []);
 
-  const startGame = useCallback(() => {
-    initGame();
-    setScore(0); setLives(3); setLevel(1);
-    setScreen("playing");
-  }, [initGame]);
+  const startGame = useCallback(() => { initGame(); setScore(0); setLives(3); setScreen("playing"); }, [initGame]);
 
-  // ── Keyboard ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const dn = e => {
-      if (["Space","ArrowUp","KeyW"].includes(e.code)) {
-        e.preventDefault();
-        if (screenRef.current === "start" || screenRef.current === "gameover") { startGame(); return; }
-        doJump();
-      }
-      if (["ArrowDown","KeyS"].includes(e.code)) doSlide();
+    const kd = e => {
+      const k = gRef.current?.keys; if(!k) return;
+      if (e.code==="ArrowRight") k.right=true; if (e.code==="ArrowLeft") k.left=true;
+      if (e.code==="Space" || e.code==="ArrowUp") { e.preventDefault(); if(screenRef.current!=="playing") startGame(); else doJump(); }
+      if (e.code==="ArrowDown") doSlide();
     };
-    window.addEventListener("keydown", dn);
-    return () => window.removeEventListener("keydown", dn);
+    const ku = e => {
+      const k = gRef.current?.keys; if(!k) return;
+      if (e.code==="ArrowRight") k.right=false; if (e.code==="ArrowLeft") k.left=false;
+    };
+    window.addEventListener("keydown", kd); window.addEventListener("keyup", ku);
+    return () => { window.removeEventListener("keydown", kd); window.removeEventListener("keyup", ku); };
   }, [startGame, doJump, doSlide]);
 
-  // ── Game Loop ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (screen !== "playing") { cancelAnimationFrame(rafRef.current); return; }
-    const cv  = cvRef.current;
-    const ctx = cv.getContext("2d");
-
-    const burst = (x, y, col, n = 10) => {
-      for (let i = 0; i < n; i++)
-        gRef.current.parts.push({
-          x, y, vx: rr(-7, 7), vy: rr(-6, -1),
-          r: rr(2, 5), col, life: rr(25, 50), maxL: 50,
-        });
-    };
-
-    const spawnCoins = g => {
-      const arc = Math.random() < 0.45;
-      const cnt = 5 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < cnt; i++) {
-        const cy = arc
-          ? GROUND_Y - 70 - Math.sin((i / (cnt - 1)) * Math.PI) * 120
-          : GROUND_Y - 70 - rr(0, 80);
-        g.coins.push({ x: W + 30 + i * 38, y: cy, off: rr(0, 6), col: false });
-      }
-      g.nCoin = g.off + 260 + rr(0, 180);
-    };
+    if (screen !== "playing") return;
+    const ctx = cvRef.current.getContext("2d");
 
     const loop = () => {
       const g = gRef.current; if (!g) return;
-      g.fr++; g.off += g.speed;
+      g.fr++;
 
-      // Score + level
-      if (++g.scoreTick >= 5) { g.score++; g.scoreTick = 0; }
-      setScore(g.score);
-      if (g.score >= g.lvlThresh) {
-        g.level++;
-        g.lvlThresh = g.score + 500 + g.level * 200;
-        g.speed = Math.min(4.6 + g.level * 0.72, 13);
-        setLevel(g.level);
+      const p = g.player;
+      let moveSpeed = 0;
+      if (g.keys.right) { moveSpeed = 6; p.faceLeft = false; }
+      else if (g.keys.left) { moveSpeed = -6; p.faceLeft = true; }
+      p.vx = moveSpeed;
+
+      if (moveSpeed !== 0) {
+        g.off += moveSpeed;
+        g.maxOff = Math.max(g.maxOff, g.off);
+        g.obstacles.forEach(o => o.x -= moveSpeed);
+        g.coins.forEach(c => c.x -= moveSpeed);
       }
 
-      // ── Player physics ──────────────────────────────────────────────────
-      const p = g.player;
       p.vy += GRAVITY; p.y += p.vy;
       const snap = GROUND_Y - (p.sliding ? SLIDE_H : PLAYER_H);
       if (p.y >= snap) { p.y = snap; p.vy = 0; p.jumps = 0; }
       if (p.invincible > 0) p.invincible--;
-      if (p.slideT > 0) { p.slideT--; if (p.slideT <= 0) p.sliding = false; }
+      if (p.slideT > 0 && --p.slideT <= 0) p.sliding = false;
 
-      // ── Spawn obstacles ─────────────────────────────────────────────────
-      if (g.off >= g.nObst) {
-        const tp = Math.random() < 0.55 ? "guard" : "barrel";
-        const oh = tp === "guard" ? 54 : 36;
-        g.obstacles.push({ x: W + 20, y: GROUND_Y - oh, type: tp, h: oh });
-        // Pair obstacle at higher levels
-        if (Math.random() < 0.22 + g.level * 0.04 && g.level >= 2)
-          g.obstacles.push({ x: W + 200, y: GROUND_Y - 36, type: "barrel", h: 36 });
-        const gap = Math.max(180, 370 - g.level * 18);
-        g.nObst = g.off + gap + rr(0, 220);
+      if (g.maxOff >= g.nObst) {
+        const oh = Math.random() < 0.5 ? 54 : 36;
+        g.obstacles.push({ x: W + 50, y: GROUND_Y - oh, type: oh===54?"guard":"barrel", h: oh });
+        g.nObst = g.maxOff + rr(300, 500);
       }
-      if (g.off >= g.nCoin) spawnCoins(g);
-      if (g.off >= g.nGem) {
-        g.gems.push({ x: W + 20, y: GROUND_Y - 80 - rr(0, 100), off: rr(0, 6), col: false });
-        g.nGem = g.off + 340 + rr(0, 320);
-      }
-      if (g.off >= g.nLamp) {
-        g.lamps.push({ x: W + 20, y: GROUND_Y - 85, off: rr(0, 6), col: false });
-        g.nLamp = g.off + 800 + rr(0, 500);
+      if (g.maxOff >= g.nCoin) {
+        for(let i=0; i<5; i++) g.coins.push({ x: W + 50 + i*35, y: GROUND_Y - 70 - rr(0, 50), off: rr(0,5), col:false });
+        g.nCoin = g.maxOff + rr(200, 400);
       }
 
-      // ── Move everything ─────────────────────────────────────────────────
-      g.obstacles.forEach(o => o.x -= g.speed);
-      g.coins.forEach(c => c.x -= g.speed);
-      g.gems.forEach(gm => gm.x -= g.speed);
-      g.lamps.forEach(l => l.x -= g.speed);
-      g.parts.forEach(pt => { pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.2; pt.life--; });
+      g.obstacles = g.obstacles.filter(o => o.x > -100 && o.x < W + 800);
+      g.coins = g.coins.filter(c => c.x > -50 && !c.col && c.x < W + 800);
 
-      g.obstacles = g.obstacles.filter(o => o.x > -90);
-      g.coins     = g.coins.filter(c => c.x > -30 && !c.col);
-      g.gems      = g.gems.filter(gm => gm.x > -30 && !gm.col);
-      g.lamps     = g.lamps.filter(l => l.x > -60 && !l.col);
-      g.parts     = g.parts.filter(pt => pt.life > 0);
-
-      // ── Collisions ──────────────────────────────────────────────────────
-      const pL = PLAYER_X + 6, pR = PLAYER_X + PLAYER_W - 6;
-      const pT = p.y + 5,     pB = p.y + (p.sliding ? SLIDE_H : PLAYER_H) - 5;
-
+      const pL = PLAYER_X + 6, pR = PLAYER_X + PLAYER_W - 6, pT = p.y + 5, pB = p.y + (p.sliding ? SLIDE_H : PLAYER_H) - 5;
       if (p.invincible <= 0) {
         for (const o of g.obstacles) {
-          if (pR > o.x + 5 && pL < o.x + 33 && pB > o.y + 6 && pT < o.y + o.h - 6) {
-            p.invincible = 90; g.lives--;
-            setLives(g.lives);
-            burst(PLAYER_X + 15, p.y + 20, "#ff4444", 16);
-            if (g.lives <= 0) {
-              const hs = Math.max(g.score, +(localStorage.getItem("al_hs") || 0));
-              localStorage.setItem("al_hs", hs);
-              setHiScore(hs); setScreen("gameover"); return;
-            }
-            break;
+          if (pR > o.x + 5 && pL < o.x + 28 && pB > o.y + 6 && pT < o.y + o.h - 6) {
+            playTone(150, 'sawtooth', 0.4); p.invincible = 90; g.lives--; setLives(g.lives);
+            if (g.lives <= 0) { setScreen("gameover"); return; } break;
           }
         }
       }
-
       g.coins.forEach(c => {
-        if (c.col) return;
-        if (pR > c.x && pL < c.x + 20 && pB > c.y && pT < c.y + 20) {
-          c.col = true; g.score += 10; burst(c.x+10, c.y+10, "#ffd700", 7);
-        }
-      });
-      g.gems.forEach(gm => {
-        if (gm.col) return;
-        if (pR > gm.x && pL < gm.x + 22 && pB > gm.y - 14 && pT < gm.y + 14) {
-          gm.col = true; g.score += 50; burst(gm.x+10, gm.y, "#00ddff", 14);
-        }
-      });
-      g.lamps.forEach(l => {
-        if (l.col) return;
-        if (pR > l.x && pL < l.x + 34 && pB > l.y - 15 && pT < l.y + 15) {
-          l.col = true; g.score += 100;
-          p.invincible = 280; burst(l.x+17, l.y, "#ffd700", 24);
+        if (!c.col && pR > c.x && pL < c.x + 20 && pB > c.y && pT < c.y + 20) {
+          c.col = true; g.score += 10; setScore(g.score); playTone(800, 'sine', 0.1);
         }
       });
 
-      // ── Draw ────────────────────────────────────────────────────────────
       ctx.clearRect(0, 0, W, H);
       drawBg(ctx, g.stars);
-      drawPalace(ctx, g.off);
-      g.coins.forEach(c  => drawCoin(ctx, c, g.fr));
-      g.gems.forEach(gm  => drawGem(ctx, gm, g.fr));
-      g.lamps.forEach(l  => drawLamp(ctx, l, g.fr));
+      g.coins.forEach(c => drawCoin(ctx, c, g.fr));
       drawGround(ctx, g.off);
-      g.obstacles.forEach(o => o.type === "guard" ? drawGuard(ctx, o, g.fr) : drawBarrel(ctx, o));
+      g.obstacles.forEach(o => drawObstacle(ctx, o));
       drawAladdin(ctx, p, g.fr);
-      drawParticles(ctx, g.parts);
       drawHUD(ctx, g);
-
       rafRef.current = requestAnimationFrame(loop);
     };
-
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
   }, [screen]);
 
-  // ── Touch ─────────────────────────────────────────────────────────────────
-  const onTouchStart = e => {
-    touchY0.current = e.touches[0].clientY;
-    if (screenRef.current === "start" || screenRef.current === "gameover") { startGame(); return; }
-    doJump();
-  };
-  const onTouchEnd = e => {
-    if (e.changedTouches[0].clientY - touchY0.current > 38) doSlide();
-  };
-
-  // ── UI panels ─────────────────────────────────────────────────────────────
-  const overlayBase = {
-    position:"absolute", inset:0, borderRadius:18,
-    display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-    gap:14, padding:"24px 20px",
-  };
+  const btnStyle = { padding:"15px 25px", fontSize:26, borderRadius:"15px", background:"rgba(255,255,255,0.2)", border:"2px solid #fff", color:"#fff", userSelect:"none" };
 
   return (
-    <React.Fragment>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          min-height: 100svh; display: flex; align-items: center; justify-content: center;
-          background: #000;
-          background-image: radial-gradient(ellipse 70% 50% at 50% 0%, rgba(80,20,160,0.4), transparent);
-        }
-        @keyframes fadeIn { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes pulse  { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } }
-        .fade-in { animation: fadeIn 0.5s ease forwards; }
-        .pulse   { animation: pulse 2s ease-in-out infinite; }
-        .start-btn:hover { filter: brightness(1.15); transform: translateY(-2px) scale(1.02); }
-        .start-btn { transition: all 0.18s ease; }
-      `}</style>
-
-      <div style={{
-        width: "100vw", height: "100svh",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontFamily: "'Noto Nastaliq Urdu', serif",
-        userSelect: "none",
-      }}>
-        <div style={{ position: "relative", width: W, height: H, maxHeight: "100svh", maxWidth: "100vw" }}>
-
-          <canvas
-            ref={cvRef} width={W} height={H}
-            style={{
-              display: "block", borderRadius: 18,
-              boxShadow: "0 0 60px rgba(255,190,0,0.2), 0 0 0 1px rgba(255,190,0,0.12), 0 30px 80px rgba(0,0,0,0.8)",
-              maxHeight: "100svh", maxWidth: "100vw",
-            }}
-            onTouchStart={onTouchStart}
-            onTouchEnd={onTouchEnd}
-          />
-
-          {screen === "start" && (
-            <div className="fade-in" style={{
-              ...overlayBase,
-              background: "linear-gradient(160deg, #04000f 0%, #130535 45%, #400a1a 100%)",
-            }}>
-              <div style={{position:"absolute",inset:0,borderRadius:18,overflow:"hidden",pointerEvents:"none"}}>
-                {Array.from({length:30},(_,i)=>(
-                  <div key={i} style={{
-                    position:"absolute",
-                    left:`${Math.random()*100}%`, top:`${Math.random()*100}%`,
-                    width:`${1+Math.random()*2}px`, height:`${1+Math.random()*2}px`,
-                    borderRadius:"50%", background:"#fff",
-                    opacity: 0.3+Math.random()*0.6,
-                  }}/>
-                ))}
-              </div>
-
-              <div className="pulse" style={{fontSize:90, filter:"drop-shadow(0 0 30px #ffd700)", lineHeight:1, zIndex:1}}>🕌</div>
-
-              <div style={{zIndex:1, textAlign:"center"}}>
-                <h1 style={{
-                  color:"#ffd700", fontSize:52, lineHeight:1.1, margin:"0 0 4px",
-                  textShadow:"0 0 30px #ffd70099, 0 2px 8px #000",
-                  fontFamily:"Cinzel, serif", letterSpacing:3,
-                }}>ALADDIN</h1>
-                <p style={{color:"#e0a0ff", fontSize:17, letterSpacing:2, fontFamily:"Cinzel,serif"}}>
-                  جادوئی مہم
-                </p>
-              </div>
-
-              <div style={{
-                zIndex:1, background:"rgba(255,255,255,0.05)",
-                border:"1px solid rgba(255,255,255,0.12)",
-                borderRadius:14, padding:"14px 22px",
-                textAlign:"right", lineHeight:2.3, fontSize:13, color:"#aaa",
-                width:"100%",
-              }}>
-                <div>⬆️ <b style={{color:"#fff"}}>اسپیس / اوپر تیر</b> — چھلانگ (دو بار = ڈبل جمپ)</div>
-                <div>⬇️ <b style={{color:"#fff"}}>نیچے تیر</b> — سلائیڈ</div>
-                <div>📱 <b style={{color:"#fff"}}>ٹیپ</b> — چھلانگ &nbsp;|&nbsp; <b style={{color:"#fff"}}>نیچے سوائپ</b> — سلائیڈ</div>
-                <div>🪙 سکہ = <b style={{color:"#ffd700"}}>10</b> &nbsp;|&nbsp; 💎 جوہر = <b style={{color:"#00ddff"}}>50</b> &nbsp;|&nbsp; 🪔 چراغ = <b style={{color:"#ffa040"}}>100 + ناقابلِ شکست</b></div>
-              </div>
-
-              {hiscore > 0 && (
-                <div style={{
-                  zIndex:1,
-                  color:"#ffd700", fontSize:17,
-                  background:"rgba(255,215,0,0.08)",
-                  border:"1px solid rgba(255,215,0,0.25)",
-                  borderRadius:24, padding:"9px 28px",
-                }}>
-                  🏆 بہترین اسکور: {hiscore}
-                </div>
-              )}
-
-              <button className="start-btn" onClick={startGame} style={{
-                zIndex:1,
-                padding:"15px 56px", fontSize:20, fontWeight:"bold",
-                background:"linear-gradient(135deg, #7c3aed, #dc2626)",
-                color:"#fff", border:"none", borderRadius:32, cursor:"pointer",
-                boxShadow:"0 8px 28px rgba(124,58,237,0.55)",
-                fontFamily:"'Noto Nastaliq Urdu', serif",
-                letterSpacing:1,
-              }}>
-                🪔 کھیلنا شروع کریں
-              </button>
-
-              <p style={{zIndex:1, color:"rgba(255,255,255,0.2)", fontSize:11, letterSpacing:1, marginTop:-6}}>
-                TAP ANYWHERE TO START
-              </p>
+    <div style={{ width:"100vw", height:"100svh", display:"flex", alignItems:"center", justifyContent:"center", background:"#111" }}>
+      <div style={{ position:"relative", width:W, height:H, maxWidth:"100vw", maxHeight:"100svh", overflow:"hidden" }}>
+        <canvas ref={cvRef} width={W} height={H} style={{ display:"block", background:"#000", width:"100%", height:"100%", objectFit:"contain" }} />
+        
+        {screen === "playing" && (
+          <React.Fragment>
+            <div style={{position:"absolute", bottom:20, left:20, display:"flex", gap:15, zIndex:10}}>
+              <button style={btnStyle} onTouchStart={()=>gRef.current.keys.left=true} onTouchEnd={()=>gRef.current.keys.left=false} onMouseDown={()=>gRef.current.keys.left=true} onMouseUp={()=>gRef.current.keys.left=false} onMouseLeave={()=>gRef.current.keys.left=false}>⬅️</button>
+              <button style={btnStyle} onTouchStart={()=>gRef.current.keys.right=true} onTouchEnd={()=>gRef.current.keys.right=false} onMouseDown={()=>gRef.current.keys.right=true} onMouseUp={()=>gRef.current.keys.right=false} onMouseLeave={()=>gRef.current.keys.right=false}>➡️</button>
             </div>
-          )}
-
-          {screen === "gameover" && (
-            <div className="fade-in" style={{
-              ...overlayBase,
-              background:"rgba(0,0,0,0.92)",
-              backdropFilter:"blur(6px)",
-            }}>
-              <div style={{fontSize:80, filter:"drop-shadow(0 0 20px #ff4444)"}}>💀</div>
-
-              <h2 style={{
-                color:"#ff4444", fontSize:44,
-                textShadow:"0 0 24px #ff444499",
-                fontFamily:"Cinzel, serif", letterSpacing:2,
-              }}>
-                کھیل ختم!
-              </h2>
-
-              <div style={{
-                background:"rgba(255,255,255,0.05)",
-                border:"1px solid rgba(255,255,255,0.1)",
-                borderRadius:16, padding:"18px 36px",
-                textAlign:"center",
-              }}>
-                <div style={{color:"#fff", fontSize:28, fontWeight:"bold", marginBottom:8}}>
-                  اسکور: <span style={{color:"#ffd700"}}>{score}</span>
-                </div>
-                <div style={{color:"#ffd700", fontSize:18}}>
-                  🏆 بہترین: {hiscore}
-                </div>
-                {score >= hiscore && score > 0 && (
-                  <div style={{color:"#00ddff", fontSize:14, marginTop:8, letterSpacing:1}}>
-                    ✨ نیا ریکارڈ! مبارک ہو!
-                  </div>
-                )}
-              </div>
-
-              <div style={{display:"flex", gap:12, fontSize:28}}>
-                {score>=1000?"🥇":score>=500?"🥈":score>=200?"🥉":"💫"}
-                <span style={{color:"#888", fontSize:13, alignSelf:"center"}}>
-                  {score>=1000?"شاندار!":score>=500?"بہت اچھا!":score>=200?"اچھا!":"کوشش کریں!"}
-                </span>
-              </div>
-
-              <div style={{display:"flex", gap:12, flexWrap:"wrap", justifyContent:"center"}}>
-                <button className="start-btn" onClick={startGame} style={{
-                  padding:"13px 42px", fontSize:18, fontWeight:"bold",
-                  background:"linear-gradient(135deg, #7c3aed, #dc2626)",
-                  color:"#fff", border:"none", borderRadius:28, cursor:"pointer",
-                  boxShadow:"0 6px 20px rgba(124,58,237,0.45)",
-                  fontFamily:"'Noto Nastaliq Urdu', serif",
-                }}>
-                  🔄 دوبارہ کھیلیں
-                </button>
-              </div>
-
-              <p style={{color:"rgba(255,255,255,0.2)", fontSize:11, letterSpacing:1}}>
-                PRESS SPACE OR TAP TO RESTART
-              </p>
+            <div style={{position:"absolute", bottom:20, right:20, display:"flex", gap:15, zIndex:10}}>
+              <button style={btnStyle} onTouchStart={(e)=>{e.preventDefault(); doJump();}} onMouseDown={(e)=>{e.preventDefault(); doJump();}}>⬆️</button>
+              <button style={btnStyle} onTouchStart={(e)=>{e.preventDefault(); doSlide();}} onMouseDown={(e)=>{e.preventDefault(); doSlide();}}>⬇️</button>
             </div>
-          )}
+          </React.Fragment>
+        )}
 
-        </div>
+        {screen !== "playing" && (
+          <div style={{position:"absolute", inset:0, background:"rgba(0,0,0,0.8)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#fff"}}>
+            <h1 style={{color:"#ffd700", fontSize:48, margin:0}}>{screen === "gameover" ? "گیم اوور" : "Aladdin Pro"}</h1>
+            {screen === "gameover" && <p style={{fontSize:24}}>آخری اسکور: {score}</p>}
+            <button onClick={startGame} style={{marginTop:20, padding:"15px 40px", fontSize:24, background:"#dc2626", color:"#fff", border:"none", borderRadius:30}}>{screen === "gameover" ? "دوبارہ کھیلیں" : "کھیلنا شروع کریں"}</button>
+          </div>
+        )}
       </div>
-    </React.Fragment>
+    </div>
   );
 }
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<AladdinGame />);
+const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<AladdinGame />);
   </script>
 </body>
 </html>
